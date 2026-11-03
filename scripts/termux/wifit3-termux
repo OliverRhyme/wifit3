@@ -1,0 +1,35 @@
+#!/data/data/com.termux/files/usr/bin/python
+"""Start wifit3 in Termux with Android's per-device USB permission grant.
+
+The launcher only acquires the initial fd; after a replug the running app re-acquires it in place
+(see ``wifit3.device.termux_usb``), so wifit3 keeps running like it does on desktop.
+"""
+import os
+import sys
+
+from wifit3.device import termux_usb
+
+
+def main():
+    argv = sys.argv[1:]
+    if argv[:1] == ["--list"]:
+        for path in termux_usb.list_devices():
+            print(path)
+        return 0
+    if len(argv) > 1:
+        print("usage: wifit3-termux [--list | /dev/bus/usb/BBB/DDD]", file=sys.stderr)
+        return 2
+
+    fd = termux_usb.acquire(argv[0] if argv else None)
+    if fd is None:
+        print("USB permission not granted, or no device attached", file=sys.stderr)
+        return 1
+
+    os.set_inheritable(fd, True)
+    os.environ["TERMUX_USB_FD"] = str(fd)
+    os.execvp("wifit3", ["wifit3"])
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

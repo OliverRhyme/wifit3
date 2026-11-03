@@ -20,12 +20,21 @@ async def _smoke() -> None:
     import ctypes
     import os
 
-    from libusb_package import get_library_path
+    from wifit3.host import is_termux
 
-    lib = get_library_path()
-    if not (lib and os.path.isfile(str(lib))):
-        raise RuntimeError(f"bundled libusb not found via libusb_package: {lib!r}")
-    ctypes.CDLL(str(lib))  # must load from the bundle (deps resolved), not just exist on disk
+    if is_termux():
+        from usb.backend import libusb1
+        try:
+            libusb1._load_library()
+        except Exception as exc:
+            raise RuntimeError("system libusb not found; run: pkg install libusb") from exc
+    else:
+        from libusb_package import get_library_path
+
+        lib = get_library_path()
+        if not (lib and os.path.isfile(str(lib))):
+            raise RuntimeError(f"bundled libusb not found via libusb_package: {lib!r}")
+        ctypes.CDLL(str(lib))  # must load from the bundle (deps resolved), not just exist on disk
 
     from wifit3.ui.app import WifiteApp
 
