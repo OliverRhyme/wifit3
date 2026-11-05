@@ -96,6 +96,10 @@ Download the latest standalone executable from [**Releases**](https://github.com
   pip install wifit3-<version>-py3-none-any.whl   # downloaded from the fork's Releases
   wifit3
   ```
+  Or install the latest release directly:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/OliverRhyme/wifit3-termux/termux-port/scripts/termux/install.sh | bash
+  ```
   See [Running in Termux](docs/TERMUX.md).
 
 ### Option 2: Run from Source

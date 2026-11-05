@@ -34,6 +34,12 @@ pkg install python libusb termux-api
 pip install ./wifit3-<version>-py3-none-any.whl   # from the release assets
 ```
 
+Or fetch the latest release with the installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OliverRhyme/wifit3-termux/termux-port/scripts/termux/install.sh | bash
+```
+
 It uses the system libusb from `pkg install libusb`. The wheel is built with `hatch_build.py`'s
 Termux metadata, so it installs on any Python the project supports (3.11+); the 3.13+ note under
 *From source* only applies to `uv sync --no-dev`.
@@ -105,6 +111,7 @@ departure/arrival flow as desktop. If you deny a permission dialog, wifit3 backs
 | Splash shows no devices | Plug in the adapter and accept Android's permission dialog; `uv run --no-dev wifit3 --list-usb` shows what Android exposes. |
 | `termux-usb -l` does not list the card | Check OTG support; if the phone's port cannot supply enough current, try a powered hub or OTG Y-cable. |
 | `system libusb not found` | `pkg install libusb`. |
+| `curl: CANNOT LINK EXECUTABLE ... cannot locate symbol "SSL_set_quic..."` | Termux packages are out of sync (libcurl vs OpenSSL). Run `pkg upgrade -y`, then retry. |
 | `termux-usb` is missing or the splash never sees a card | Install the Termux:API app (F-Droid/Play) and `pkg install termux-api`; the package alone is not enough. |
 | `uv sync` fails building `pyinstaller` (`ldd: command not found`) | Use `uv sync --no-dev`; the dev group is desktop-only. |
 | `uv sync` fails on `libusb-package` (no wheel for the current platform) | Python < 3.13 on Termux reports `sys.platform == "linux"`, so the Android marker does not skip it. Run `uv sync --no-dev --no-install-package libusb-package`, `pip install .` (the build hook drops it), or `pkg upgrade python`. |
