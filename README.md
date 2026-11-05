@@ -1,6 +1,9 @@
 # wifit3
 > A standalone USB Wi-Fi auditor for Linux, Windows, macOS, and Android (via Termux).
 
+> **Termux fork of [derv82/wifit3](https://github.com/derv82/wifit3).** Upstream is pulled in
+> continuously; Termux-specific changes live on the `termux-port` branch.
+
 <p align="center">
   <img src="assets/wifit3-1-splash.png" alt="wifit3 splash / adapter picker" width="700">
 </p>
