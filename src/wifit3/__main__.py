@@ -23,11 +23,11 @@ async def _smoke() -> None:
     from wifit3.host import is_termux
 
     if is_termux():
-        from usb.backend import libusb1
-        try:
-            libusb1._load_library()
-        except Exception as exc:
-            raise RuntimeError("system libusb not found; run: pkg install libusb") from exc
+        from wifit3.device import termux_usb
+        if termux_usb.libusb_library() is None:
+            detail = termux_usb.libusb_error()
+            raise RuntimeError("system libusb not found; run: pkg install libusb"
+                               + (f" ({detail})" if detail else ""))
     else:
         from libusb_package import get_library_path
 
@@ -53,10 +53,13 @@ async def _smoke() -> None:
 
 def _require_termux_libusb(parser) -> None:
     """Termux uses the system libusb; fail early with the install command."""
-    from usb.backend import libusb1
+    from wifit3.device import termux_usb
 
-    if libusb1.get_backend() is None:
-        parser.exit(1, "wifit3: system libusb not found. Run: pkg install libusb\n")
+    if termux_usb.libusb_library() is None:
+        detail = termux_usb.libusb_error()
+        suffix = f"\n{detail}" if detail else ""
+        parser.exit(1, f"wifit3: system libusb not found in {termux_usb.libusb_search_path()}."
+                       f"{suffix}\nRun: pkg install libusb\n")
 
 
 def _parser():

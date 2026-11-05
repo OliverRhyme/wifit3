@@ -33,32 +33,33 @@ pip install ./wifit3-<version>-py3-none-any.whl   # from the release assets
 
 It uses the system libusb from `pkg install libusb`. The wheel is built with `hatch_build.py`'s
 Termux metadata, so it installs on any Python the project supports (3.11+); the 3.13+ note under
-*From source* only applies to `uv sync`.
+*From source* only applies to `uv sync --no-dev`.
 
 ### From source
 
 ```bash
 git clone https://github.com/OliverRhyme/wifit3-termux
 cd wifit3-termux
-uv sync
+uv sync --no-dev
 ```
 
-Termux's Python 3.13+ reports `sys.platform == "android"`, so `libusb-package` is marked
-`sys_platform != "android"` and `uv sync` skips it; wifit3 then uses the system libusb from
+`--no-dev` skips the desktop dev group (PyInstaller etc.); it does not build on Termux. Termux's
+Python 3.13+ reports `sys.platform == "android"`, so `libusb-package` is marked
+`sys_platform != "android"` and `uv sync --no-dev` skips it; wifit3 then uses the system libusb from
 `pkg install libusb`. Older Termux Pythons report `linux`, so the marker does not exclude it; use
-`uv sync --no-install-package libusb-package` (or `pip install .`, where `hatch_build.py` drops the
-dependency from the built wheel).
+`uv sync --no-dev --no-install-package libusb-package` (or `pip install .`, where `hatch_build.py`
+drops the dependency from the built wheel).
 
 ## Run
 
 Start wifit3 like on any other platform:
 
 ```bash
-uv run wifit3
+uv run --no-dev wifit3
 ```
 
 If you installed with pip (the prebuilt wheel or `pip install .`), the bare `wifit3` command works.
-The examples below use `uv run`; drop it when using a pip install.
+The examples below use `uv run --no-dev`; drop the prefix when using a pip install.
 
 No adapter is needed to launch: the splash keeps scanning, and Android asks for permission when
 a card appears. Accept that dialog, and tick "Use by default for this USB device" if Android offers
@@ -71,7 +72,7 @@ real terminal attached to Textual.
 ### Listing devices
 
 ```bash
-uv run wifit3 --list-usb       # paths Android currently exposes
+uv run --no-dev wifit3 --list-usb   # paths Android currently exposes
 ```
 
 Every attached adapter is requested in the background as it appears. Each granted fd gets its own
@@ -98,11 +99,12 @@ departure/arrival flow as desktop. If you deny a permission dialog, wifit3 backs
 
 | Symptom | Fix |
 |---|---|
-| Splash shows no devices | Plug in the adapter and accept Android's permission dialog; `uv run wifit3 --list-usb` shows what Android exposes. |
+| Splash shows no devices | Plug in the adapter and accept Android's permission dialog; `uv run --no-dev wifit3 --list-usb` shows what Android exposes. |
 | `termux-usb -l` does not list the card | Check OTG support; if the phone's port cannot supply enough current, try a powered hub or OTG Y-cable. |
 | `system libusb not found` | `pkg install libusb`. |
 | `termux-usb` is missing or the splash never sees a card | Install the Termux:API app (F-Droid/Play) and `pkg install termux-api`; the package alone is not enough. |
-| `uv sync` fails on `libusb-package` (no wheel for the current platform) | Python < 3.13 on Termux reports `sys.platform == "linux"`, so the Android marker does not skip it. Run `uv sync --no-install-package libusb-package`, `pip install .` (the build hook drops it), or `pkg upgrade python`. |
+| `uv sync` fails building `pyinstaller` (`ldd: command not found`) | Use `uv sync --no-dev`; the dev group is desktop-only. |
+| `uv sync` fails on `libusb-package` (no wheel for the current platform) | Python < 3.13 on Termux reports `sys.platform == "linux"`, so the Android marker does not skip it. Run `uv sync --no-dev --no-install-package libusb-package`, `pip install .` (the build hook drops it), or `pkg upgrade python`. |
 | Permission dialog keeps appearing | Tick "Use by default for this USB device"; after a denial wifit3 waits 30 s before retrying. |
 | Adapter disappears mid-run | Often power-related: try a powered hub or OTG Y-cable. |
 | Driver reports a warm/claimed device | The ROM bound a kernel driver; test on another ROM or use a rooted setup. |

@@ -107,10 +107,10 @@ uv run wifit3
 pkg install python libusb termux-api git uv
 git clone https://github.com/OliverRhyme/wifit3-termux
 cd wifit3-termux
-uv sync
-uv run wifit3
+uv sync --no-dev
+uv run --no-dev wifit3
 ```
-Install the **Termux:API app** from F-Droid or Google Play as well; the `termux-api` package is only the client. Plain `uv sync` needs Python 3.13+ (the lockfile skips the glibc `libusb-package` on Android). Older Termux Pythons can use the prebuilt wheel above or `uv sync --no-install-package libusb-package`. See [Running in Termux](docs/TERMUX.md) for the USB setup.
+Install the **Termux:API app** from F-Droid or Google Play as well; the `termux-api` package is only the client. Use `--no-dev`: the dev group includes PyInstaller, which doesn't build on Termux. Python 3.13+ skips `libusb-package`; older Pythons can use the prebuilt wheel above or `uv sync --no-dev --no-install-package libusb-package`. See [Running in Termux](docs/TERMUX.md) for the USB setup.
 
 ### Option 3: Build your own binary
 ```bash

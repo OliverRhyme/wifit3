@@ -22,7 +22,7 @@ class _App:
 def _termux(monkeypatch):
     _App.ran = False
     monkeypatch.setattr("wifit3.host.is_termux", lambda: True)
-    monkeypatch.setattr("usb.backend.libusb1.get_backend", lambda: object())
+    monkeypatch.setattr(termux_usb, "libusb_library", lambda: object())
     monkeypatch.setattr("wifit3.ui.app.WifiteApp", _App)
     saved = {name: os.environ.pop(name, None) for name in ("TERMUX_USB_FD",)}
     yield
@@ -44,7 +44,7 @@ def test_main_runs_the_app(monkeypatch):
 
 
 def test_main_requires_system_libusb(monkeypatch):
-    monkeypatch.setattr("usb.backend.libusb1.get_backend", lambda: None)
+    monkeypatch.setattr(termux_usb, "libusb_library", lambda: None)
 
     with pytest.raises(SystemExit) as exc:
         _run(monkeypatch)

@@ -2,6 +2,8 @@
 kept fresh by a single background poller."""
 from __future__ import annotations
 
+import ctypes.util
+import glob
 import json
 import os
 import select
@@ -27,6 +29,7 @@ _denied: dict[str, "_Denial"] = {}
 _reconciling = False
 _poller: threading.Thread | None = None
 _last_error: str | None = None
+_libusb_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -173,28 +176,71 @@ def fd_hung_up(fd: int) -> bool:
         return True
 
 
-def new_backend(fd: int):
-    """A libusb context whose initial scan reads ``fd`` through the temporary env override."""
+def libusb_search_path() -> str:
+    """The glob of system libusb names checked under the Termux prefix."""
+    prefix = os.environ.get("PREFIX", "/data/data/com.termux/files/usr")
+    return os.path.join(prefix, "lib", "libusb-1.0.so*")
+
+
+def _find_libusb(name: str) -> str | None:
+    for path in sorted(glob.glob(libusb_search_path())):
+        if os.path.exists(path):
+            return path
+    return ctypes.util.find_library(name)
+
+
+def libusb_library():
+    """The Termux system libusb, loaded from ``$PREFIX/lib`` without creating a context."""
+    global _libusb_error
     from usb.backend import libusb1
 
-    try:
-        libusb1.get_backend()
-        lib = getattr(libusb1, "_lib", None)
-        factory = getattr(libusb1, "_LibUSB", None)
-        if lib is None or factory is None:
-            return None
-        with _env_lock:
-            previous = os.environ.get("TERMUX_USB_FD")
-            os.environ["TERMUX_USB_FD"] = str(fd)
+    with _env_lock:
+        previous = os.environ.pop("TERMUX_USB_FD", None)
+        try:
+            path = _find_libusb("usb-1.0")
+            if path is None:
+                _libusb_error = "libusb-1.0.so not found"
+                return None
             try:
-                return factory(lib)
-            finally:
-                if previous is None:
-                    os.environ.pop("TERMUX_USB_FD", None)
-                else:
-                    os.environ["TERMUX_USB_FD"] = previous
-    except Exception:
+                lib = libusb1._load_library(find_library=lambda _name: path)
+                libusb1._setup_prototypes(lib)
+                libusb1._lib = lib
+                _libusb_error = None
+                return lib
+            except Exception as exc:
+                _libusb_error = f"{type(exc).__name__}: {exc}"
+                return None
+        finally:
+            if previous is not None:
+                os.environ["TERMUX_USB_FD"] = previous
+
+
+def libusb_error() -> str | None:
+    """Why the last libusb load failed, or None when it succeeded."""
+    return _libusb_error
+
+
+def new_backend(fd: int):
+    """A libusb context bound to ``fd``; the env is set before libusb init."""
+    from usb.backend import libusb1
+
+    lib = libusb_library()
+    factory = getattr(libusb1, "_LibUSB", None)
+    if lib is None or factory is None:
         return None
+    with _env_lock:
+        previous = os.environ.get("TERMUX_USB_FD")
+        os.environ["TERMUX_USB_FD"] = str(fd)
+        try:
+            return factory(lib)
+        except Exception as exc:
+            _set_error(f"USB descriptor could not attach: {exc}")
+            return None
+        finally:
+            if previous is None:
+                os.environ.pop("TERMUX_USB_FD", None)
+            else:
+                os.environ["TERMUX_USB_FD"] = previous
 
 
 def _set_error(message: str | None) -> None:

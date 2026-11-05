@@ -15,6 +15,7 @@ def _reset_state(monkeypatch):
     termux_usb._reconciling = False
     termux_usb._poller = None
     termux_usb._last_error = None
+    termux_usb._libusb_error = None
     monkeypatch.delenv("TERMUX_USB_FD", raising=False)
     monkeypatch.setattr(termux_usb, "_ensure_poller", lambda: None)
     yield
@@ -95,6 +96,80 @@ def test_send_and_receive_fd(tmp_path, monkeypatch):
 
 def test_send_fd_without_descriptor_is_a_no_op(tmp_path):
     termux_usb.send_fd(str(tmp_path / "missing.sock"))
+
+
+def test_find_libusb_uses_the_termux_prefix(tmp_path, monkeypatch):
+    (tmp_path / "lib").mkdir()
+    lib = tmp_path / "lib" / "libusb-1.0.so.0"
+    lib.write_bytes(b"")
+    monkeypatch.setenv("PREFIX", str(tmp_path))
+
+    assert termux_usb._find_libusb("usb-1.0") == str(lib)
+
+
+def test_find_libusb_accepts_a_versioned_name(tmp_path, monkeypatch):
+    (tmp_path / "lib").mkdir()
+    lib = tmp_path / "lib" / "libusb-1.0.so.0.3.0"
+    lib.write_bytes(b"")
+    monkeypatch.setenv("PREFIX", str(tmp_path))
+
+    assert termux_usb._find_libusb("usb-1.0") == str(lib)
+
+
+def test_libusb_library_loads_the_prefix_library(monkeypatch):
+    monkeypatch.setattr(termux_usb, "_find_libusb", lambda name: "/lib/libusb-1.0.so")
+    lib = object()
+    monkeypatch.setattr("usb.backend.libusb1._load_library", lambda find_library=None: lib)
+    monkeypatch.setattr("usb.backend.libusb1._setup_prototypes", lambda _lib: None)
+
+    assert termux_usb.libusb_library() is lib
+    assert termux_usb.libusb_error() is None
+
+
+def test_libusb_library_reports_a_load_error(monkeypatch):
+    monkeypatch.setattr(termux_usb, "_find_libusb", lambda name: "/lib/libusb-1.0.so")
+
+    def boom(**kwargs):
+        raise OSError("boom")
+
+    monkeypatch.setattr("usb.backend.libusb1._load_library", boom)
+
+    assert termux_usb.libusb_library() is None
+    assert "boom" in termux_usb.libusb_error()
+
+
+def test_libusb_library_ignores_a_stale_fd(monkeypatch):
+    seen = {}
+
+    def fake_load(**kwargs):
+        seen["fd"] = os.environ.get("TERMUX_USB_FD")
+        return "lib"
+
+    monkeypatch.setenv("TERMUX_USB_FD", "99")
+    monkeypatch.setattr(termux_usb, "_find_libusb", lambda name: "/lib/libusb-1.0.so")
+    monkeypatch.setattr("usb.backend.libusb1._load_library", fake_load)
+    monkeypatch.setattr("usb.backend.libusb1._setup_prototypes", lambda _lib: None)
+
+    assert termux_usb.libusb_library() == "lib"
+    assert seen["fd"] is None
+    assert os.environ["TERMUX_USB_FD"] == "99"
+
+
+def test_new_backend_sets_the_fd_before_init(monkeypatch):
+    monkeypatch.setattr(termux_usb, "libusb_library", lambda: "lib")
+    seen = {}
+
+    class Backend:
+        def __init__(self, lib):
+            seen["fd"] = os.environ.get("TERMUX_USB_FD")
+
+    monkeypatch.setattr("usb.backend.libusb1._LibUSB", Backend)
+
+    backend = termux_usb.new_backend(7)
+
+    assert isinstance(backend, Backend)
+    assert seen["fd"] == "7"
+    assert "TERMUX_USB_FD" not in os.environ
 
 
 def test_drops_dead_entry(monkeypatch):
