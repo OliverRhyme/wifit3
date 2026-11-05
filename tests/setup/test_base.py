@@ -40,10 +40,12 @@ def test_for_platform_termux(monkeypatch):
 
 def test_for_platform_macos(monkeypatch):
     from wifit3.setup.macos import SetupMacOS
+    monkeypatch.setattr("wifit3.setup.base.is_termux", lambda: False)
     monkeypatch.setattr(sys, "platform", "darwin")
     assert isinstance(Setup.for_platform(), SetupMacOS)
 
 
 def test_for_platform_falls_back_to_nosetup(monkeypatch):
+    monkeypatch.setattr("wifit3.setup.base.is_termux", lambda: False)
     monkeypatch.setattr(sys, "platform", "sunos5")
     assert isinstance(Setup.for_platform(), NoSetup)

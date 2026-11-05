@@ -41,6 +41,10 @@ class UsbBackend(ABC):
         """The usbfs node for ``dev`` where the platform has one (desktop Linux)."""
         return None
 
+    def status_hint(self) -> Optional[str]:
+        """A short platform error for the UI, or None when there is nothing to report."""
+        return None
+
 
 class LibusbBackend(UsbBackend):
     """Desktop: one libusb context, either bundled or system-provided."""
@@ -80,6 +84,10 @@ class TermuxBackend(UsbBackend):
     def find_all(self, vid, pid):
         from wifit3.device import termux_usb
         return termux_usb.find_all_devices(vid, pid)
+
+    def status_hint(self):
+        from wifit3.device import termux_usb
+        return termux_usb.last_error()
 
 
 def usb_backend() -> Optional[UsbBackend]:

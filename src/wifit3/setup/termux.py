@@ -1,4 +1,4 @@
-"""Termux/Android setup: Android grants USB access through the launcher's ``termux-usb`` prompt."""
+"""Termux/Android setup: Android grants USB access through ``wifit3``'s startup ``termux-usb`` prompt."""
 from __future__ import annotations
 
 from wifit3.models import DeviceID
@@ -11,9 +11,10 @@ class SetupTermux(Setup):
     async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:
         ui.error(
             "USB access",
-            "Start wifit3 through the Termux launcher so Android grants USB access:\n\n"
-            "  wifit3-termux /dev/bus/usb/001/002\n\n"
-            "List attached devices with: termux-usb -l",
+            "Android grants USB access when an adapter is attached. Plug it in and accept "
+            "the permission dialog.\n\n"
+            "The Termux:API app must be installed (the termux-api package alone is not enough).\n\n"
+            "List attached devices with: wifit3 --list-usb",
         )
         return None
 

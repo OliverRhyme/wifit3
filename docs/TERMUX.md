@@ -6,64 +6,90 @@ VM, no proot, and no root.
 
 ## Requirements
 
-- A rooted-free Android device with USB-OTG support
-- Termux and the Termux:API app
+- An Android device with USB-OTG support
+- Termux and the **Termux:API app** (from F-Droid or Google Play; the `termux-api` package alone is not enough)
 - A supported USB adapter (for example the TP-Link Archer T2U+ / RTL8821AU, `2357:0120`)
-- A **powered** USB hub or OTG Y-cable; the adapter can draw more current than the phone supplies
 - A Termux `libusb` build that understands `TERMUX_USB_FD` (the patch landed in late 2024)
 
 Install the packages:
 
 ```bash
-pkg install python libusb termux-api git
+pkg install python libusb termux-api git uv
 ```
+
+`pkg install termux-api` is only the CLI client; install the Termux:API app from F-Droid or Google
+Play as well.
 
 ## Install
 
-`libusb-package` (the desktop dependency) bundles a glibc library that cannot load under Termux, so
-install wifit3 without its dependencies and supply the pure-Python ones explicitly:
+### Prebuilt wheel
+
+Each release attaches a pure-Python wheel, so the phone needs no compiler or checkout:
 
 ```bash
-git clone https://github.com/derv82/wifit3
-cd wifit3
-pip install --no-deps -e .
-pip install platformdirs pyusb rich textual
-install -m755 scripts/termux/wifit3-termux "$PREFIX/bin/wifit3-termux"
+pkg install python libusb termux-api
+pip install ./wifit3-<version>-py3-none-any.whl   # from the release assets
 ```
+
+It uses the system libusb from `pkg install libusb`. The wheel is built with `hatch_build.py`'s
+Termux metadata, so it installs on any Python the project supports (3.11+); the 3.13+ note under
+*From source* only applies to `uv sync`.
+
+### From source
+
+```bash
+git clone https://github.com/OliverRhyme/wifit3-termux
+cd wifit3-termux
+uv sync
+```
+
+Termux's Python 3.13+ reports `sys.platform == "android"`, so `libusb-package` is marked
+`sys_platform != "android"` and `uv sync` skips it; wifit3 then uses the system libusb from
+`pkg install libusb`. Older Termux Pythons report `linux`, so the marker does not exclude it; use
+`uv sync --no-install-package libusb-package` (or `pip install .`, where `hatch_build.py` drops the
+dependency from the built wheel).
 
 ## Run
 
-Android grants USB access per device and per app launch, so start wifit3 through the launcher:
+Start wifit3 like on any other platform:
 
 ```bash
-wifit3-termux                          # auto-picks the first attached device
-wifit3-termux /dev/bus/usb/001/002     # or name it explicitly
+uv run wifit3
 ```
 
-Accept the Android permission dialog when it appears. Tick "Use by default for this USB device" if
-Android offers it, so a replug needs no confirmation.
+If you installed with pip (the prebuilt wheel or `pip install .`), the bare `wifit3` command works.
+The examples below use `uv run`; drop it when using a pip install.
 
-The launcher requests the first device; once wifit3 is running, every other attached adapter is
-requested and brought up as well. Each granted fd gets its own libusb context, and the contexts are
-aggregated, so the multi-card features work exactly as they do on desktop.
+No adapter is needed to launch: the splash keeps scanning, and Android asks for permission when
+a card appears. Accept that dialog, and tick "Use by default for this USB device" if Android offers
+it, so a replug needs no confirmation.
 
-If the adapter is unplugged, wifit3 keeps running. It reports the card as gone, and when the adapter
-returns the app re-requests the descriptor and brings the card back up — the same departure/arrival
-flow as desktop. Android may ask for USB permission again unless "Use by default for this USB
-device" was ticked.
+`wifit3` requests descriptors in a background watcher, so the UI stays responsive and no separate
+launcher script is needed. Each granted fd is passed to its own libusb context, which keeps the
+real terminal attached to Textual.
 
-The launcher requests the device with `termux-usb -r -E` and receives the descriptor over a Unix
-socket, then execs wifit3 with the terminal and `TERMUX_USB_FD` intact. It cannot simply use
-`termux-usb -e "wifit3"`: that callback runs inside the Termux:API app with pipes for stdio, so
-Textual sees no terminal and renders at its 80x25 fallback size.
+### Listing devices
+
+```bash
+uv run wifit3 --list-usb       # paths Android currently exposes
+```
+
+Every attached adapter is requested in the background as it appears. Each granted fd gets its own
+libusb context and the contexts are aggregated, so the multi-card features work exactly as they do
+on desktop.
+
+If the adapter is unplugged, wifit3 keeps running. It reports the card as gone, and when the
+adapter returns the app re-requests the descriptor and brings the card back up — the same
+departure/arrival flow as desktop. If you deny a permission dialog, wifit3 backs off for 30 seconds
+(up to 10 minutes) instead of re-prompting in a loop; relaunching clears the backoff.
 
 ## What differs from desktop Linux
 
 - **No udev, no modprobe.** Android's `UsbHostManager` owns device claiming; the permission dialog is
   the only "setup" step. `SetupTermux` replaces `SetupLinux`.
 - **One context per granted fd.** Termux's patched libusb reads `TERMUX_USB_FD` only at init, so each
-  adapter gets a fresh context and the contexts are aggregated. Android prompts per adapter unless
-  "Use by default for this USB device" is ticked.
+  adapter gets a fresh context and the contexts are aggregated. A single background watcher refreshes
+  the list, so UI threads never shell out to `termux-usb`.
 - **No kernel driver detach.** wifit3's userland drivers want a cold-boot card. Most stock Android
   kernels ship no `rtw88`/`ath9k_htc` USB drivers, so the dongle stays cold. If your kernel does bind
   one, the port may fail on that ROM.
@@ -72,16 +98,21 @@ Textual sees no terminal and renders at its 80x25 fallback size.
 
 | Symptom | Fix |
 |---|---|
-| Splash shows no devices | Launch through `wifit3-termux`; a bare `wifit3` has no USB descriptor. |
-| `termux-usb -l` does not list the card | Check OTG support and power; try a powered hub. |
+| Splash shows no devices | Plug in the adapter and accept Android's permission dialog; `uv run wifit3 --list-usb` shows what Android exposes. |
+| `termux-usb -l` does not list the card | Check OTG support; if the phone's port cannot supply enough current, try a powered hub or OTG Y-cable. |
 | `system libusb not found` | `pkg install libusb`. |
-| Adapter disappears mid-run | Power. Use a powered hub or OTG Y-cable. |
+| `termux-usb` is missing or the splash never sees a card | Install the Termux:API app (F-Droid/Play) and `pkg install termux-api`; the package alone is not enough. |
+| `uv sync` fails on `libusb-package` (no wheel for the current platform) | Python < 3.13 on Termux reports `sys.platform == "linux"`, so the Android marker does not skip it. Run `uv sync --no-install-package libusb-package`, `pip install .` (the build hook drops it), or `pkg upgrade python`. |
+| Permission dialog keeps appearing | Tick "Use by default for this USB device"; after a denial wifit3 waits 30 s before retrying. |
+| Adapter disappears mid-run | Often power-related: try a powered hub or OTG Y-cable. |
 | Driver reports a warm/claimed device | The ROM bound a kernel driver; test on another ROM or use a rooted setup. |
 
 ## Notes
 
 - Termux reports `sys.platform == "linux"`, so detection uses `TERMUX_VERSION` (see
   `src/wifit3/host.py`).
-- The code changes are `host.py`, `device/backend.py`, `setup/termux.py`, plus backend wiring in
-  `device/manager.py`, `__main__.py`, `ui/app.py`, and two chip drivers.
+- The platform code is `host.py`, `device/backend.py`, `device/termux_usb.py`, `setup/termux.py`,
+  plus the bootstrap in `__main__.py` and backend wiring in `device/manager.py`.
+- CI runs the full unit suite with the Termux detection env set, and checks that a Termux-built
+  wheel omits `libusb-package`.
 - Upstreaming is not done. This branch is a working starting point, not a supported release.

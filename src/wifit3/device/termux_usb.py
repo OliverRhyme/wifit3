@@ -1,10 +1,5 @@
-"""Android USB file descriptors for Termux.
-
-``termux-usb`` grants a per-device fd inside the Termux:API app, so we receive it over a Unix
-socket (both apps share the Termux UID). Each fd gets its own libusb context because the patched
-libusb reads ``TERMUX_USB_FD`` only at init. Contexts are aggregated, so multiple cards work and a
-replug is just a dropped context plus a fresh one.
-"""
+"""Android USB file descriptors for Termux: one libusb context per granted ``termux-usb`` fd,
+kept fresh by a single background poller."""
 from __future__ import annotations
 
 import json
@@ -19,14 +14,19 @@ from dataclasses import dataclass
 
 import usb.core
 
-LIST_TTL = 2.0
+LIST_INTERVAL = 2.0
+LIST_FAILURE_INTERVAL = 15.0
 ACQUIRE_TIMEOUT = 120.0
+ACQUIRE_BACKOFF = 30.0
+ACQUIRE_BACKOFF_MAX = 600.0
 
-_lock = threading.Lock()
+_lock = threading.RLock()
+_env_lock = threading.Lock()
 _entries: dict[str, "_Entry"] = {}
+_denied: dict[str, "_Denial"] = {}
 _reconciling = False
-_next_check = 0.0
-_imported_env = False
+_poller: threading.Thread | None = None
+_last_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,12 @@ class _Entry:
     path: str
     fd: int
     backend: object
+
+
+@dataclass(frozen=True)
+class _Denial:
+    retry_at: float
+    delay: float
 
 
 def list_devices() -> list[str]:
@@ -49,19 +55,25 @@ def _list_raw() -> list[str] | None:
 
 
 def send_fd(sock_path: str) -> None:
-    """Callback mode: forward ``TERMUX_USB_FD`` to the launcher's socket."""
-    fd = int(os.environ["TERMUX_USB_FD"])
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(sock_path)
-    socket.send_fds(sock, [b"wifit3"], [fd])
-    sock.close()
+    """Callback mode: forward ``TERMUX_USB_FD`` to wifit3 over its Unix socket."""
+    raw = os.environ.get("TERMUX_USB_FD")
+    if raw is None:
+        print("TERMUX_USB_FD is not set; cannot forward the descriptor", file=sys.stderr)
+        return
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.connect(sock_path)
+        socket.send_fds(sock, [b"wifit3"], [int(raw)])
 
 
-def _recv_fd(sock_path: str, proc: subprocess.Popen, timeout: float) -> int | None:
+def _listen(sock_path: str) -> socket.socket:
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(sock_path)
     server.listen(1)
     server.settimeout(1.0)
+    return server
+
+
+def _recv_fd(server: socket.socket, proc: subprocess.Popen, timeout: float) -> int | None:
     deadline = time.monotonic() + timeout
     try:
         while True:
@@ -80,31 +92,76 @@ def _recv_fd(sock_path: str, proc: subprocess.Popen, timeout: float) -> int | No
         server.close()
 
 
+def _reap(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        proc.wait()
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
 def acquire(device: str | None = None) -> int | None:
-    """Request ``device`` (or the first attached device) and return its fd, or None."""
+    """Request ``device`` (or the first attached device) and return its fd, or None.
+    The socket is bound before ``termux-usb`` starts, so a fast callback cannot race it."""
     if device is None:
         found = list_devices()
         if not found:
+            _set_error("no USB device is visible; connect the adapter and install the "
+                       "Termux:API app")
             return None
         device = found[0]
+    fd = _request_fd(device)
+    if fd is None:
+        _defer(device)
+    return fd
 
+
+def _request_fd(device: str) -> int | None:
     base = os.environ.get("PREFIX") or os.environ.get("HOME") or "/data/data/com.termux/files/usr"
     sock_path = os.path.join(base, "tmp", f"wifit3-usb-{os.getpid()}-{threading.get_ident()}.sock")
     try:
         os.unlink(sock_path)
     except FileNotFoundError:
         pass
+    except OSError as exc:
+        _set_error(f"cannot use the USB handshake socket: {exc}")
+        return None
+
+    try:
+        server = _listen(sock_path)
+    except OSError as exc:
+        _set_error(f"cannot open the USB handshake socket: {exc}")
+        return None
 
     callback = f"{sys.executable} -m wifit3.device.termux_usb --send-fd {sock_path}"
-    proc = subprocess.Popen(["termux-usb", "-r", "-E", "-e", callback, device])
     try:
-        return _recv_fd(sock_path, proc, ACQUIRE_TIMEOUT)
+        proc = subprocess.Popen(["termux-usb", "-r", "-E", "-e", callback, device],
+                                stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        server.close()
+        _set_error(f"termux-usb could not start: {exc}")
+        return None
+    try:
+        return _recv_fd(server, proc, ACQUIRE_TIMEOUT)
+    except OSError as exc:
+        _set_error(f"could not receive the USB descriptor: {exc}")
+        return None
     finally:
-        proc.wait()
+        _reap(proc)
         try:
             os.unlink(sock_path)
         except FileNotFoundError:
             pass
+
+
+def last_error() -> str | None:
+    """Why the last background reconcile failed, or None when it succeeded."""
+    with _lock:
+        return _last_error
 
 
 def fd_hung_up(fd: int) -> bool:
@@ -114,21 +171,6 @@ def fd_hung_up(fd: int) -> bool:
         return bool(poller.poll(0))
     except (OSError, ValueError):
         return True
-
-
-def _env_fd() -> int | None:
-    raw = os.environ.get("TERMUX_USB_FD")
-    try:
-        return int(raw) if raw else None
-    except ValueError:
-        return None
-
-
-def _path(fd: int) -> str | None:
-    try:
-        return os.readlink(f"/proc/self/fd/{fd}")
-    except OSError:
-        return None
 
 
 def new_backend(fd: int):
@@ -141,33 +183,24 @@ def new_backend(fd: int):
         factory = getattr(libusb1, "_LibUSB", None)
         if lib is None or factory is None:
             return None
-        previous = os.environ.get("TERMUX_USB_FD")
-        os.environ["TERMUX_USB_FD"] = str(fd)
-        try:
-            return factory(lib)
-        finally:
-            if previous is None:
-                os.environ.pop("TERMUX_USB_FD", None)
-            else:
-                os.environ["TERMUX_USB_FD"] = previous
+        with _env_lock:
+            previous = os.environ.get("TERMUX_USB_FD")
+            os.environ["TERMUX_USB_FD"] = str(fd)
+            try:
+                return factory(lib)
+            finally:
+                if previous is None:
+                    os.environ.pop("TERMUX_USB_FD", None)
+                else:
+                    os.environ["TERMUX_USB_FD"] = previous
     except Exception:
         return None
 
 
-def _import_env_fd() -> None:
-    global _imported_env
-    if _imported_env:
-        return
-    _imported_env = True
-    fd = _env_fd()
-    if fd is None or fd_hung_up(fd):
-        return
-    path = _path(fd)
-    if path is None or path in _entries:
-        return
-    backend = new_backend(fd)
-    if backend is not None:
-        _entries[path] = _Entry(path, fd, backend)
+def _set_error(message: str | None) -> None:
+    global _last_error
+    with _lock:
+        _last_error = message
 
 
 def _close_entry(entry: _Entry) -> None:
@@ -177,53 +210,98 @@ def _close_entry(entry: _Entry) -> None:
         pass
 
 
-def _reconcile() -> None:
+def _add_entry(path: str, fd: int) -> bool:
+    backend = new_backend(fd)
+    if backend is None:
+        return False
+    with _lock:
+        if path in _entries:
+            return False
+        _entries[path] = _Entry(path, fd, backend)
+    return True
+
+
+def _defer(path: str) -> None:
+    now = time.monotonic()
+    with _lock:
+        previous = _denied.get(path)
+        delay = ACQUIRE_BACKOFF if previous is None else min(
+            previous.delay * 2, ACQUIRE_BACKOFF_MAX)
+        _denied[path] = _Denial(now + delay, delay)
+
+
+def _reconcile() -> bool:
     global _reconciling
+    with _lock:
+        if _reconciling:
+            return True
+        _reconciling = True
     try:
         paths = _list_raw()
         if paths is None:
-            return
+            _set_error("termux-usb is unavailable; install the Termux:API app and its "
+                       "termux-api package")
+            return False
+        now = time.monotonic()
         with _lock:
-            stale = [e for path, e in _entries.items() if path not in paths or fd_hung_up(e.fd)]
+            stale = [e for e in _entries.values() if e.path not in paths or fd_hung_up(e.fd)]
             for entry in stale:
                 _entries.pop(entry.path, None)
+            for gone in [p for p in _denied if p not in paths]:
+                _denied.pop(gone, None)
+            wanted = [p for p in paths
+                      if p not in _entries and (p not in _denied or _denied[p].retry_at <= now)]
         for entry in stale:
             _close_entry(entry)
-        for path in paths:
-            with _lock:
-                if path in _entries:
-                    continue
+        _set_error(None)
+        for path in wanted:
             fd = acquire(path)
             if fd is None:
                 continue
-            backend = new_backend(fd)
-            if backend is None:
+            if not _add_entry(path, fd):
                 os.close(fd)
+                _defer(path)
                 continue
             with _lock:
-                _entries[path] = _Entry(path, fd, backend)
+                _denied.pop(path, None)
+        return True
     finally:
         with _lock:
             _reconciling = False
 
 
-def _maybe_reconcile() -> None:
-    global _reconciling, _next_check
-    now = time.monotonic()
-    if _reconciling or now < _next_check:
+def _poll_loop() -> None:
+    while True:
+        try:
+            ok = _reconcile()
+        except Exception as exc:
+            _set_error(f"USB watcher failed: {exc}")
+            ok = False
+        time.sleep(LIST_INTERVAL if ok else LIST_FAILURE_INTERVAL)
+
+
+def _ensure_poller() -> None:
+    global _poller
+    if _poller is not None:
         return
-    _next_check = now + LIST_TTL
-    _reconciling = True
-    threading.Thread(target=_reconcile, daemon=True).start()
+    with _lock:
+        if _poller is not None:
+            return
+        poller = threading.Thread(target=_poll_loop, name="termux-usb-watch", daemon=True)
+        try:
+            poller.start()
+        except RuntimeError as exc:
+            _set_error(f"USB watcher could not start: {exc}")
+            return
+        _poller = poller
 
 
 def _backends() -> list[object]:
     with _lock:
-        _import_env_fd()
         dead = [e for e in _entries.values() if fd_hung_up(e.fd)]
         for entry in dead:
             _entries.pop(entry.path, None)
-        _maybe_reconcile()
+        _ensure_poller()
         snapshot = [e.backend for e in _entries.values()]
     for entry in dead:
         _close_entry(entry)

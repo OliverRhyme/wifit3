@@ -1,4 +1,4 @@
-"""Termux setup: Android has no udev/modprobe step; point the user at the launcher."""
+"""Termux setup: Android has no udev/modprobe step; point the user at the startup prompt."""
 from wifit3.models import DeviceID
 from wifit3.setup.termux import SetupTermux
 
@@ -29,7 +29,7 @@ _DEV = DeviceID(0x2357, 0x0120, "Archer T2U+")
 async def test_install_points_at_the_launcher():
     ui = _Prompter()
     assert await SetupTermux().install(_DEV, ui) is None
-    assert ui.errors and "termux-usb" in ui.errors[0][1]
+    assert ui.errors and "wifit3 --list-usb" in ui.errors[0][1]
 
 
 async def test_uninstall_is_a_no_op():

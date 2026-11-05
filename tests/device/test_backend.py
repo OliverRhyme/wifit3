@@ -84,3 +84,12 @@ def test_termux_backend_finds(monkeypatch):
 def test_termux_backend_finds_all(monkeypatch):
     monkeypatch.setattr("wifit3.device.termux_usb.find_all_devices", lambda vid, pid: [(vid, pid)])
     assert backend.TermuxBackend().find_all(1, 2) == [(1, 2)]
+
+
+def test_desktop_backend_has_no_status_hint():
+    assert backend.LibusbBackend(None).status_hint() is None
+
+
+def test_termux_backend_reports_the_last_error(monkeypatch):
+    monkeypatch.setattr("wifit3.device.termux_usb.last_error", lambda: "boom")
+    assert backend.TermuxBackend().status_hint() == "boom"
