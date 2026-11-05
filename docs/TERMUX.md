@@ -4,6 +4,9 @@
 same Python code natively in Termux, using Android's USB host API through `termux-usb`. There is no
 VM, no proot, and no root.
 
+**Hardware-tested on:** a Samsung device and a Pixel 8 Pro, using an RTL8821AU (`2357:0120`). Other
+chipsets and ROMs are untested.
+
 ## Requirements
 
 - An Android device with USB-OTG support
