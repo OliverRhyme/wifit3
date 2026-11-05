@@ -55,7 +55,9 @@ def _require_termux_libusb(parser) -> None:
     """Termux uses the system libusb; fail early with the install command."""
     from usb.backend import libusb1
 
-    if libusb1.get_backend() is None:
+    try:
+        libusb1._load_library()
+    except Exception:
         parser.exit(1, "wifit3: system libusb not found. Run: pkg install libusb\n")
 
 
