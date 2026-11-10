@@ -1,13 +1,25 @@
-"""The USB backend interface: desktop libusb and Termux's aggregated contexts."""
+"""The USB backend interface: one libusb context for the desktop, per-fd contexts on Termux."""
+from types import SimpleNamespace
+
+import pytest
 import usb.core
 
+from tests.device.fakes import FakeBackend
 from wifit3.device import backend
 
 
 def test_libusb_backend_enumerates(monkeypatch):
+    seen = {}
     dev = object()
-    monkeypatch.setattr(usb.core, "find", lambda **kw: [dev])
-    assert backend.LibusbBackend(object()).enumerate() == [dev]
+
+    def find(**kw):
+        seen.update(kw)
+        return [dev]
+
+    monkeypatch.setattr(usb.core, "find", find)
+    ctx = object()
+    assert backend.LibusbBackend(ctx).enumerate() == [dev]
+    assert seen == {"find_all": True, "backend": ctx}
 
 
 def test_libusb_backend_find_targets_instance(monkeypatch):
@@ -51,22 +63,52 @@ def test_libusb_backend_node_path_unknown():
     assert backend.LibusbBackend(None).node_path(object()) is None
 
 
-def test_usb_backend_termux(monkeypatch):
-    monkeypatch.setattr(backend, "is_termux", lambda: True)
-    assert isinstance(backend.usb_backend(), backend.TermuxBackend)
-
-
-def test_usb_backend_desktop(monkeypatch):
+def test_usb_backend_returns_a_libusb_backend(monkeypatch):
     monkeypatch.setattr(backend, "is_termux", lambda: False)
     low = object()
     monkeypatch.setattr(backend, "_desktop_libusb", lambda: low)
     assert isinstance(backend.usb_backend(), backend.LibusbBackend)
 
 
-def test_usb_backend_desktop_missing_libusb(monkeypatch):
+def test_usb_backend_termux(monkeypatch):
+    monkeypatch.setattr(backend, "is_termux", lambda: True)
+    assert isinstance(backend.usb_backend(), backend.TermuxBackend)
+
+
+def test_usb_backend_missing_libusb(monkeypatch):
     monkeypatch.setattr(backend, "is_termux", lambda: False)
     monkeypatch.setattr(backend, "_desktop_libusb", lambda: None)
-    assert backend.usb_backend() is None
+    with pytest.raises(usb.core.NoBackendError):
+        backend.usb_backend()
+
+
+@pytest.fixture(autouse=True)
+def _reset_backend_factory():
+    yield
+    backend.set_usb_backend_factory(None)
+
+
+def test_usb_backend_factory_override():
+    fake = FakeBackend()
+    backend.set_usb_backend_factory(lambda: fake)
+    assert backend.usb_backend() is fake
+
+
+def test_desktop_libusb_prefers_the_bundle(monkeypatch):
+    bundled = object()
+    monkeypatch.setattr(backend, "libusb_package",
+                        SimpleNamespace(get_libusb1_backend=lambda: bundled))
+    monkeypatch.setattr("usb.backend.libusb1.get_backend",
+                        lambda: pytest.fail("system backend used"))
+    assert backend._desktop_libusb() is bundled
+
+
+def test_desktop_libusb_falls_back_to_system(monkeypatch):
+    system = object()
+    monkeypatch.setattr(backend, "libusb_package",
+                        SimpleNamespace(get_libusb1_backend=lambda: None))
+    monkeypatch.setattr("usb.backend.libusb1.get_backend", lambda: system)
+    assert backend._desktop_libusb() is system
 
 
 def test_termux_backend_enumerates(monkeypatch):
