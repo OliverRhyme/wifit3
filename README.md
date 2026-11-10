@@ -3,6 +3,10 @@
 
 > **Termux fork of [derv82/wifit3](https://github.com/derv82/wifit3).** Upstream is pulled in
 > continuously; Termux-specific changes live on the `termux-port` branch.
+>
+> **Versioning:** fork releases are tagged `v<upstream>+termux.<n>` (for example
+> `v0.7.0+termux.1`), where `<upstream>` is the derv82/wifit3 version the fork is based on and
+> `<n>` counts fork releases on that base.
 
 <p align="center">
   <img src="assets/wifit3-1-splash.png" alt="wifit3 splash / adapter picker" width="700">

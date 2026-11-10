@@ -119,6 +119,20 @@ departure/arrival flow as desktop. If you deny a permission dialog, wifit3 backs
 | Adapter disappears mid-run | Often power-related: try a powered hub or OTG Y-cable. |
 | Driver reports a warm/claimed device | The ROM bound a kernel driver; test on another ROM or use a rooted setup. |
 
+## Releases and versioning
+
+Fork releases use a PEP 440 local version: `<upstream>+termux.<n>`. `<upstream>` is the
+derv82/wifit3 version the fork is based on; `<n>` counts fork releases on that base. For example,
+`0.7.0+termux.1` is the first fork release based on upstream 0.7.0. Pip orders it after plain
+`0.7.0` and before `0.7.1`, and it never collides with an upstream tag.
+
+Each release is tagged `v<version>`; the tag must match `src/wifit3/__init__.py`, which the release
+workflow checks. Sync upstream first, then cut a release with:
+
+```bash
+uv run python scripts/termux/release.py --push
+```
+
 ## Notes
 
 - Termux reports `sys.platform == "linux"`, so detection uses `TERMUX_VERSION` (see
@@ -127,4 +141,3 @@ departure/arrival flow as desktop. If you deny a permission dialog, wifit3 backs
   plus the bootstrap in `__main__.py` and backend wiring in `device/manager.py`.
 - CI runs the full unit suite with the Termux detection env set, and checks that a Termux-built
   wheel omits `libusb-package`.
-- Upstreaming is not done. This branch is a working starting point, not a supported release.
